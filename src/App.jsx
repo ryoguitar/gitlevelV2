@@ -69,7 +69,7 @@ const INIT_GUITARS = [
     ],
   },
 ];
-INIT_GUITARS.forEach(g => { g.basePresetId = g.presets[0].id; });
+INIT_GUITARS.forEach(g => { g.basePresetId = g.presets[0].id; g.baseAbsDb = null; });
 
 // ── Sub-components ─────────────────────────────────────────────
 function DbBadge({ value, size = 14 }) {
@@ -125,6 +125,11 @@ export default function App() {
   const [baseDb, setBaseDb]         = useState(null);
   const [measurePhase, setMeasurePhase] = useState("idle"); // idle | calibrate | measure | done
   const [resultDiff, setResultDiff] = useState(null);
+  const [resultAbs, setResultAbs]   = useState(null);
+  const [measureMode, setMeasureMode] = useState("full"); // full | solo | baseOnly
+  const [compareMode, setCompareMode] = useState("absolute"); // absolute | relative
+  const [selectedHistory, setSelectedHistory] = useState([]); // [{presetId, historyId}]
+  const [selectMode, setSelectMode] = useState(false);
 
   // New guitar / preset modal
   const [modal, setModal] = useState(null); // null | "guitar" | "preset"
@@ -210,7 +215,59 @@ export default function App() {
     const ok = await startAudio();
     if (!ok) return;
 
-    // Phase 1: calibrate baseline (base preset)
+    // ── Base only: re-measure just the base preset's absolute level ──
+    if (measureMode === "baseOnly") {
+      setMeasurePhase("measure");
+      await new Promise(r => setTimeout(r, 4000));
+      const baseSamples = await collectSamples(3000);
+      const baseRms = baseSamples.reduce((a, b) => a + b, 0) / baseSamples.length;
+      const baseDbVal = rmsToDb(baseRms);
+
+      setMeasurePhase("done");
+      setResultAbs(baseDbVal);
+      setResultDiff(null);
+      stopAudio();
+
+      setGuitars(prev => prev.map(g =>
+        g.id !== activeGuitarId ? g : { ...g, baseAbsDb: baseDbVal }
+      ));
+      return;
+    }
+
+    // ── Solo: only measure target preset, compare against saved base absolute dB ──
+    const isSolo = measureMode === "solo" && guitar.baseAbsDb !== null && guitar.baseAbsDb !== undefined;
+    if (isSolo) {
+      setMeasurePhase("measure");
+      await new Promise(r => setTimeout(r, 4000));
+      const tgtSamples = await collectSamples(3000);
+      const tgtRms = tgtSamples.reduce((a, b) => a + b, 0) / tgtSamples.length;
+      const tgtDbVal = rmsToDb(tgtRms);
+      const diff = tgtDbVal - guitar.baseAbsDb;
+
+      setMeasurePhase("done");
+      setResultDiff(diff);
+      setResultAbs(null);
+      stopAudio();
+
+      setGuitars(prev => prev.map(g =>
+        g.id !== activeGuitarId ? g : {
+          ...g,
+          presets: g.presets.map(p =>
+            p.id !== activePresetId ? p : {
+              ...p,
+              db: diff,
+              history: [
+                ...p.history,
+                { id: uid(), at: new Date().toISOString(), db: diff },
+              ].slice(-20),
+            }
+          ),
+        }
+      ));
+      return;
+    }
+
+    // ── Full: measure base preset then target preset ──
     setMeasurePhase("calibrate");
     await new Promise(r => setTimeout(r, 4000));
     const baseSamples = await collectSamples(3000);
@@ -218,7 +275,6 @@ export default function App() {
     const baseDbVal = rmsToDb(baseRms);
     setBaseDb(baseDbVal);
 
-    // Phase 2: measure target preset
     setMeasurePhase("measure");
     await new Promise(r => setTimeout(r, 4000));
     const tgtSamples = await collectSamples(3000);
@@ -228,19 +284,21 @@ export default function App() {
 
     setMeasurePhase("done");
     setResultDiff(diff);
+    setResultAbs(null);
     stopAudio();
 
-    // Save to preset
+    // Save base absolute dB for the guitar (enables solo mode later) + save preset diff
     setGuitars(prev => prev.map(g =>
       g.id !== activeGuitarId ? g : {
         ...g,
+        baseAbsDb: baseDbVal,
         presets: g.presets.map(p =>
           p.id !== activePresetId ? p : {
             ...p,
             db: diff,
             history: [
               ...p.history,
-              { at: new Date().toISOString(), db: diff },
+              { id: uid(), at: new Date().toISOString(), db: diff },
             ].slice(-20),
           }
         ),
@@ -251,6 +309,7 @@ export default function App() {
   const resetMeasure = () => {
     setMeasurePhase("idle");
     setResultDiff(null);
+    setResultAbs(null);
     setBaseDb(null);
   };
 
@@ -288,12 +347,63 @@ export default function App() {
     ));
   };
 
+  // ── History deletion ──────────────────────────────────────────
+  const toggleHistorySelect = (presetId, historyId) => {
+    setSelectedHistory(prev => {
+      const exists = prev.some(s => s.presetId === presetId && s.historyId === historyId);
+      if (exists) return prev.filter(s => !(s.presetId === presetId && s.historyId === historyId));
+      return [...prev, { presetId, historyId }];
+    });
+  };
+
+  const deleteSelectedHistory = () => {
+    if (selectedHistory.length === 0) return;
+    setGuitars(prev => prev.map(g =>
+      g.id !== activeGuitarId ? g : {
+        ...g,
+        presets: g.presets.map(p => ({
+          ...p,
+          history: p.history.filter(h =>
+            !selectedHistory.some(s => s.presetId === p.id && s.historyId === h.id)
+          ),
+        })),
+      }
+    ));
+    setSelectedHistory([]);
+    setSelectMode(false);
+  };
+
+  const deleteSingleHistory = (presetId, historyId) => {
+    setGuitars(prev => prev.map(g =>
+      g.id !== activeGuitarId ? g : {
+        ...g,
+        presets: g.presets.map(p =>
+          p.id !== presetId ? p : {
+            ...p,
+            history: p.history.filter(h => h.id !== historyId),
+          }
+        ),
+      }
+    ));
+  };
+
   // ── Compare data ──────────────────────────────────────────────
   const comparePresetName = preset?.name ?? "";
+
+  // absolute dB for a preset: guitar's measured base level + preset's relative diff
+  const absDb = (g, p) => (g.baseAbsDb ?? null) !== null ? g.baseAbsDb + p.db : null;
+
   const compareRows = guitars.map(g => {
     const p = g.presets.find(p => p.name === comparePresetName);
-    return { guitar: g.name, db: p?.db ?? null };
-  }).filter(r => r.db !== null);
+    if (!p) return null;
+    const hasAbs = g.baseAbsDb !== null && g.baseAbsDb !== undefined;
+    return {
+      guitar: g.name,
+      relDb: p.db,
+      absDb: hasAbs ? absDb(g, p) : null,
+      hasAbs,
+    };
+  }).filter(Boolean);
 
   // ── Linear level for VU (clamp -60…0 dB → 0…1) ───────────────
   const vuLevel = liveDb !== null
@@ -475,27 +585,66 @@ export default function App() {
             {/* History for active preset */}
             {preset && preset.history.length > 0 && (
               <div style={{ marginTop: 16 }}>
-                <div style={{ color: T.textMid, fontSize: 11, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.08em" }}>
-                  {preset.name} — 測定履歴
+                <div style={{
+                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                  marginBottom: 8,
+                }}>
+                  <div style={{ color: T.textMid, fontSize: 11, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                    {preset.name} — 測定履歴
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    {selectMode && selectedHistory.length > 0 && (
+                      <button onClick={deleteSelectedHistory} style={{
+                        background: T.red, border: "none", borderRadius: 6,
+                        padding: "3px 10px", color: "#fff", fontSize: 11,
+                        fontWeight: 700, cursor: "pointer",
+                      }}>選択削除 ({selectedHistory.length})</button>
+                    )}
+                    <button onClick={() => { setSelectMode(m => !m); setSelectedHistory([]); }} style={{
+                      background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
+                      padding: "3px 10px", color: T.textMid, fontSize: 11, cursor: "pointer",
+                    }}>{selectMode ? "完了" : "選択"}</button>
+                  </div>
                 </div>
                 <div style={{
                   background: T.surface, borderRadius: 12,
                   border: `1px solid ${T.border}`, overflow: "hidden",
                 }}>
-                  {[...preset.history].reverse().slice(0, 5).map((h, i) => (
-                    <div key={i} style={{
-                      padding: "8px 16px",
-                      borderBottom: `1px solid ${T.border}`,
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                    }}>
-                      <span style={{ color: T.textMid, fontSize: 12 }}>
-                        {new Date(h.at).toLocaleString("ja-JP", { month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" })}
-                      </span>
-                      <DbBadge value={h.db} size={12} />
-                    </div>
-                  ))}
+                  {[...preset.history].reverse().slice(0, 10).map((h) => {
+                    const isChecked = selectedHistory.some(s => s.presetId === preset.id && s.historyId === h.id);
+                    return (
+                      <div key={h.id} style={{
+                        padding: "8px 16px",
+                        borderBottom: `1px solid ${T.border}`,
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                      }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          {selectMode && (
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => toggleHistorySelect(preset.id, h.id)}
+                              style={{ width: 16, height: 16, accentColor: T.amber, cursor: "pointer" }}
+                            />
+                          )}
+                          <span style={{ color: T.textMid, fontSize: 12 }}>
+                            {new Date(h.at).toLocaleString("ja-JP", { month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" })}
+                          </span>
+                        </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                          <DbBadge value={h.db} size={12} />
+                          {!selectMode && (
+                            <button onClick={() => deleteSingleHistory(preset.id, h.id)} style={{
+                              background: "none", border: "none", color: T.textLo,
+                              fontSize: 14, cursor: "pointer", padding: "2px 4px",
+                            }}>✕</button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -505,6 +654,48 @@ export default function App() {
         {/* ── MEASURE TAB ── */}
         {tab === "measure" && (
           <div>
+            {/* Mode toggle */}
+            <div style={{
+              display: "flex", gap: 6, marginBottom: 16,
+              background: T.surface, borderRadius: 10, padding: 4,
+              border: `1px solid ${T.border}`,
+            }}>
+              <button onClick={() => setMeasureMode("baseOnly")} style={{
+                flex: 1, padding: "8px 4px", borderRadius: 8, border: "none",
+                background: measureMode === "baseOnly" ? T.amberDim : "transparent",
+                color: measureMode === "baseOnly" ? T.amber : T.textMid,
+                fontWeight: measureMode === "baseOnly" ? 700 : 400,
+                fontSize: 12, cursor: "pointer",
+              }}>基準のみ</button>
+              <button
+                onClick={() => setMeasureMode("solo")}
+                disabled={guitar?.baseAbsDb === null || guitar?.baseAbsDb === undefined}
+                style={{
+                  flex: 1, padding: "8px 4px", borderRadius: 8, border: "none",
+                  background: measureMode === "solo" ? T.amberDim : "transparent",
+                  color: (guitar?.baseAbsDb === null || guitar?.baseAbsDb === undefined)
+                    ? T.textLo
+                    : measureMode === "solo" ? T.amber : T.textMid,
+                  fontWeight: measureMode === "solo" ? 700 : 400,
+                  fontSize: 12,
+                  cursor: (guitar?.baseAbsDb === null || guitar?.baseAbsDb === undefined) ? "not-allowed" : "pointer",
+                }}>対象のみ</button>
+              <button onClick={() => setMeasureMode("full")} style={{
+                flex: 1, padding: "8px 4px", borderRadius: 8, border: "none",
+                background: measureMode === "full" ? T.amberDim : "transparent",
+                color: measureMode === "full" ? T.amber : T.textMid,
+                fontWeight: measureMode === "full" ? 700 : 400,
+                fontSize: 12, cursor: "pointer",
+              }}>基準＋対象</button>
+            </div>
+            {measureMode === "solo" && (guitar?.baseAbsDb === null || guitar?.baseAbsDb === undefined) && (
+              <div style={{
+                color: T.textLo, fontSize: 11, textAlign: "center", marginTop: -8, marginBottom: 16,
+              }}>
+                ※ 先に「基準のみ」または「基準＋対象」で一度測定すると、対象のみ測定が使えるようになります
+              </div>
+            )}
+
             {/* Context */}
             <div style={{
               background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`,
@@ -518,19 +709,37 @@ export default function App() {
                 <span style={{ color: T.textMid, fontSize: 12 }}>基準プリセット</span>
                 <span style={{ color: T.amber, fontWeight: 700 }}>{basePreset?.name ?? "—"}</span>
               </div>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ color: T.textMid, fontSize: 12 }}>測定対象</span>
-                <span style={{ fontWeight: 700 }}>{preset?.name ?? "—"}</span>
-              </div>
+              {measureMode !== "baseOnly" && (
+                <div style={{ display: "flex", justifyContent: "space-between" }}>
+                  <span style={{ color: T.textMid, fontSize: 12 }}>測定対象</span>
+                  <span style={{ fontWeight: 700 }}>{preset?.name ?? "—"}</span>
+                </div>
+              )}
             </div>
 
             {/* Phase UI */}
             {measurePhase === "idle" && (
               <div style={{ textAlign: "center" }}>
                 <p style={{ color: T.textMid, fontSize: 13, lineHeight: 1.7, marginBottom: 20 }}>
-                  ① 基準プリセット（{basePreset?.name}）で同じフレーズを弾く<br />
-                  ② 測定対象プリセット（{preset?.name}）に切り替えて同じフレーズを弾く<br />
-                  差分を自動算出します。
+                  {measureMode === "full" && (
+                    <>
+                      ① 基準プリセット（{basePreset?.name}）で同じフレーズを弾く<br />
+                      ② 測定対象プリセット（{preset?.name}）に切り替えて同じフレーズを弾く<br />
+                      差分を自動算出します。
+                    </>
+                  )}
+                  {measureMode === "solo" && (
+                    <>
+                      測定対象プリセット（{preset?.name}）だけを弾いてください。<br />
+                      保存済みの基準値と自動で比較します。
+                    </>
+                  )}
+                  {measureMode === "baseOnly" && (
+                    <>
+                      基準プリセット（{basePreset?.name}）だけを弾いてください。<br />
+                      基準の音量を更新します（各プリセットのdB差分は変わりません）。
+                    </>
+                  )}
                 </p>
                 <button onClick={handleMeasure} style={{
                   background: T.amber, border: "none", borderRadius: 12,
@@ -563,12 +772,36 @@ export default function App() {
               <div style={{ textAlign: "center" }}>
                 <div style={{ fontSize: 40, marginBottom: 12 }}>🔴</div>
                 <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 8 }}>
-                  プリセットを切り替えて弾いてください
+                  {measureMode === "full" ? "プリセットを切り替えて弾いてください" : "そのまま弾いてください"}
                 </div>
                 <div style={{ color: T.green, fontWeight: 700, fontSize: 15, marginBottom: 16 }}>
-                  {preset?.name} — 録音中
+                  {measureMode === "baseOnly" ? basePreset?.name : preset?.name} — 録音中
                 </div>
                 <VuMeter level={vuLevel} />
+              </div>
+            )}
+
+            {measurePhase === "done" && resultAbs !== null && (
+              <div>
+                <div style={{
+                  background: T.surface, borderRadius: 12,
+                  border: `1px solid ${T.border}`, padding: 20, marginBottom: 16,
+                }}>
+                  <div style={{ textAlign: "center", marginBottom: 16 }}>
+                    <div style={{ color: T.textMid, fontSize: 12, marginBottom: 4 }}>基準を更新しました</div>
+                    <div style={{ fontSize: 48, fontFamily: "monospace", fontWeight: 800, color: T.amber }}>
+                      {fmtAbs(resultAbs)} dB
+                    </div>
+                    <div style={{ color: T.textMid, fontSize: 12, marginTop: 8 }}>
+                      {basePreset?.name}（基準）の絶対音量
+                    </div>
+                  </div>
+                </div>
+                <button onClick={resetMeasure} style={{
+                  width: "100%", background: T.surface, border: `1px solid ${T.border}`,
+                  borderRadius: 10, padding: 12, color: T.textMid,
+                  fontSize: 14, cursor: "pointer",
+                }}>もう一度測定</button>
               </div>
             )}
 
@@ -631,6 +864,34 @@ export default function App() {
                 fontSize: 12, fontWeight: 700, cursor: "pointer",
               }}>⬇ CSV出力</button>
             </div>
+
+            {/* Absolute / Relative toggle */}
+            <div style={{
+              display: "flex", gap: 8, marginBottom: 12,
+              background: T.surface, borderRadius: 10, padding: 4,
+              border: `1px solid ${T.border}`,
+            }}>
+              <button onClick={() => setCompareMode("absolute")} style={{
+                flex: 1, padding: "7px 0", borderRadius: 8, border: "none",
+                background: compareMode === "absolute" ? T.amberDim : "transparent",
+                color: compareMode === "absolute" ? T.amber : T.textMid,
+                fontWeight: compareMode === "absolute" ? 700 : 400,
+                fontSize: 12, cursor: "pointer",
+              }}>絶対音量で比較</button>
+              <button onClick={() => setCompareMode("relative")} style={{
+                flex: 1, padding: "7px 0", borderRadius: 8, border: "none",
+                background: compareMode === "relative" ? T.amberDim : "transparent",
+                color: compareMode === "relative" ? T.amber : T.textMid,
+                fontWeight: compareMode === "relative" ? 700 : 400,
+                fontSize: 12, cursor: "pointer",
+              }}>各ギター内の基準差分</button>
+            </div>
+            {compareMode === "absolute" && compareRows.some(r => !r.hasAbs) && (
+              <div style={{ color: T.textLo, fontSize: 11, marginBottom: 12, lineHeight: 1.6 }}>
+                ※ 基準が未測定のギターは絶対比較に含まれません（測定タブで「基準＋対象」を一度実行してください）
+              </div>
+            )}
+
             <div style={{
               background: T.surface, borderRadius: 12,
               border: `1px solid ${T.border}`, overflow: "hidden",
@@ -640,29 +901,47 @@ export default function App() {
                   同名プリセットが他のギターにありません
                 </div>
               )}
-              {compareRows.sort((a, b) => b.db - a.db).map((r, i) => {
-                const max = Math.max(...compareRows.map(x => Math.abs(x.db)), 1);
-                const pct = (Math.abs(r.db) / max) * 100;
-                return (
-                  <div key={i} style={{
-                    padding: "12px 16px",
-                    borderBottom: i < compareRows.length - 1 ? `1px solid ${T.border}` : "none",
-                  }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                      <span style={{ fontWeight: 600 }}>{r.guitar}</span>
-                      <DbBadge value={r.db} />
+              {(() => {
+                const usable = compareMode === "absolute"
+                  ? compareRows.filter(r => r.hasAbs)
+                  : compareRows;
+                const valueOf = r => compareMode === "absolute" ? r.absDb : r.relDb;
+                const sorted = [...usable].sort((a, b) => valueOf(b) - valueOf(a));
+                const max = Math.max(...usable.map(x => Math.abs(valueOf(x))), 1);
+                const min = compareMode === "absolute" ? Math.min(...usable.map(valueOf), 0) : 0;
+                return sorted.map((r, i) => {
+                  const v = valueOf(r);
+                  const pct = compareMode === "absolute"
+                    ? ((v - min) / (max - min || 1)) * 100
+                    : (Math.abs(v) / max) * 100;
+                  return (
+                    <div key={i} style={{
+                      padding: "12px 16px",
+                      borderBottom: i < sorted.length - 1 ? `1px solid ${T.border}` : "none",
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                        <span style={{ fontWeight: 600 }}>{r.guitar}</span>
+                        {compareMode === "absolute" ? (
+                          <span style={{
+                            fontFamily: "'SF Mono', 'Fira Mono', monospace",
+                            fontSize: 14, fontWeight: 700, color: T.amber,
+                          }}>{fmtAbs(v)} dB</span>
+                        ) : (
+                          <DbBadge value={v} />
+                        )}
+                      </div>
+                      <div style={{ height: 4, background: T.border, borderRadius: 2 }}>
+                        <div style={{
+                          height: "100%", borderRadius: 2,
+                          width: `${pct}%`,
+                          background: compareMode === "absolute" ? T.amber : (v > 0 ? T.red : v < 0 ? T.blue : T.green),
+                          transition: "width 0.3s",
+                        }} />
+                      </div>
                     </div>
-                    <div style={{ height: 4, background: T.border, borderRadius: 2 }}>
-                      <div style={{
-                        height: "100%", borderRadius: 2,
-                        width: `${pct}%`,
-                        background: r.db > 0 ? T.red : r.db < 0 ? T.blue : T.green,
-                        transition: "width 0.3s",
-                      }} />
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                });
+              })()}
             </div>
 
             {/* All preset comparison matrix */}
@@ -675,8 +954,11 @@ export default function App() {
                   background: T.surface, borderRadius: 12,
                   border: `1px solid ${T.border}`, marginBottom: 10, overflow: "hidden",
                 }}>
-                  <div style={{ padding: "10px 16px", borderBottom: `1px solid ${T.border}`, fontWeight: 700 }}>
-                    {g.icon} {g.name}
+                  <div style={{ padding: "10px 16px", borderBottom: `1px solid ${T.border}`, fontWeight: 700, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span>{g.icon} {g.name}</span>
+                    {(g.baseAbsDb === null || g.baseAbsDb === undefined) && (
+                      <span style={{ fontSize: 10, color: T.textLo }}>基準未測定</span>
+                    )}
                   </div>
                   {g.presets.map(p => (
                     <div key={p.id} style={{
@@ -689,7 +971,14 @@ export default function App() {
                           background: p.id === g.basePresetId ? T.amber : T.border }} />
                         <span style={{ color: T.textMid, fontSize: 13 }}>{p.name}</span>
                       </div>
-                      <DbBadge value={p.db} size={12} />
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        {(g.baseAbsDb !== null && g.baseAbsDb !== undefined) && (
+                          <span style={{ fontFamily: "monospace", fontSize: 11, color: T.textLo }}>
+                            {fmtAbs(g.baseAbsDb + p.db)} dB
+                          </span>
+                        )}
+                        <DbBadge value={p.db} size={12} />
+                      </div>
                     </div>
                   ))}
                 </div>
