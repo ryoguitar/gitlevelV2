@@ -305,9 +305,11 @@ export default function App(){
     const reader=new FileReader();
     reader.onload=ev=>{
       const result=parseCsv(ev.target.result);
-      if(!result||result.length===0){alert("CSVの読み込みに失敗しました。");return;}
-      setGuitars(prev=>[...prev,...result]);
-      alert(`${result.length}件のギターを読み込みました。`);
+      if(!result||result.length===0){alert("CSVの読み込みに失敗しました。フォーマットを確認してください。");return;}
+      if(!window.confirm(`既存のデータを全て削除して、${result.length}件のギターを読み込みます。よろしいですか？`)) return;
+      setGuitars(result);
+      setActiveGuitarId(result[0].id);
+      setActivePresetId(result[0].presets[0].id);
     };
     reader.readAsText(file,"UTF-8");
     e.target.value="";
