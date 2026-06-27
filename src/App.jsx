@@ -12,7 +12,6 @@ const fmt = v => v >= 0 ? `+${v.toFixed(1)}` : v.toFixed(1);
 const fmtAbs = v => v.toFixed(1);
 const rmsToDb = rms => rms <= 0 ? -Infinity : 20 * Math.log10(rms);
 
-// ── CSV export ────────────────────────────────────────────────
 function exportCsv(guitars) {
   const rows = [["ギター","プリセット","基準","差分(dB)"]];
   guitars.forEach(g => g.presets.forEach(p =>
@@ -26,7 +25,6 @@ function exportCsv(guitars) {
   a.click(); URL.revokeObjectURL(url);
 }
 
-// ── CSV import ────────────────────────────────────────────────
 function parseCsv(text) {
   const lines = text.trim().split("\n").map(l=>l.split(",").map(c=>c.replace(/^"|"$/g,"").trim()));
   const header = lines[0].map(h=>h.toLowerCase());
@@ -55,14 +53,12 @@ function parseCsv(text) {
   });
 }
 
-// ── Default templates ─────────────────────────────────────────
 const DEFAULT_TEMPLATES = [
   {id:uid(), name:"Standard 4", presets:["Clean","Crunch","Lead","Solo"]},
   {id:uid(), name:"Simple 3",   presets:["Clean","Drive","Boost"]},
   {id:uid(), name:"Jazz",       presets:["Clean","Soft","Rhythm","Solo"]},
 ];
 
-// ── Init guitars ──────────────────────────────────────────────
 const mkGuitar = (name, presetNames) => {
   const baseId=uid();
   const presets=presetNames.map((n,i)=>({id:i===0?baseId:uid(),name:n,db:0,history:[]}));
@@ -70,7 +66,6 @@ const mkGuitar = (name, presetNames) => {
 };
 const INIT_GUITARS=[mkGuitar("Strat SSH",["Clean","Crunch","Lead"]),mkGuitar("Telecaster",["Clean","Crunch","Lead"])];
 
-// ── Sub-components ────────────────────────────────────────────
 function DbBadge({value,size=14}){
   const color=value>0?T.red:value<0?T.blue:T.green;
   return <span style={{fontFamily:"'SF Mono','Fira Mono',monospace",fontSize:size,fontWeight:700,color,letterSpacing:"0.02em"}}>{fmt(value)} dB</span>;
@@ -89,60 +84,48 @@ function VuMeter({level}){
   );
 }
 
-// ── Selector: Guitar + Preset (reusable) ──────────────────────
-function GuitarPresetSelector({guitars,activeGuitarId,activePresetId,onSelectGuitar,onSelectPreset,hidePreset=false}){
-  const guitar=guitars.find(g=>g.id===activeGuitarId);
+function Selector({label, items, activeId, onSelect, nameKey="name"}){
   return(
-    <div style={{background:T.surface,borderRadius:12,border:`1px solid ${T.border}`,padding:12,marginBottom:16}}>
-      <div style={{fontSize:11,color:T.textMid,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.08em"}}>ギター</div>
-      <div style={{display:"flex",gap:6,flexWrap:"wrap",marginBottom:hidePreset?0:12}}>
-        {guitars.map(g=>(
-          <button key={g.id} onClick={()=>onSelectGuitar(g.id)} style={{
-            padding:"5px 12px",borderRadius:16,border:`1px solid ${g.id===activeGuitarId?T.amber:T.border}`,
-            background:g.id===activeGuitarId?T.amberDim:"transparent",
-            color:g.id===activeGuitarId?T.amber:T.textMid,
-            fontWeight:g.id===activeGuitarId?700:400,fontSize:12,cursor:"pointer",
-          }}>{g.name}</button>
+    <div style={{marginBottom:10}}>
+      <div style={{fontSize:11,color:T.textMid,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.08em"}}>{label}</div>
+      <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+        {items.map(item=>(
+          <button key={item.id} onClick={()=>onSelect(item.id)} style={{
+            padding:"5px 12px",borderRadius:16,
+            border:`1px solid ${item.id===activeId?T.amber:T.border}`,
+            background:item.id===activeId?T.amberDim:"transparent",
+            color:item.id===activeId?T.amber:T.textMid,
+            fontWeight:item.id===activeId?700:400,fontSize:12,cursor:"pointer",
+          }}>{item[nameKey]}</button>
         ))}
       </div>
-      {!hidePreset && guitar && (
-        <>
-          <div style={{fontSize:11,color:T.textMid,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.08em"}}>プリセット</div>
-          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            {guitar.presets.map(p=>(
-              <button key={p.id} onClick={()=>onSelectPreset(p.id)} style={{
-                padding:"5px 12px",borderRadius:16,
-                border:`1px solid ${p.id===activePresetId?T.amber:T.border}`,
-                background:p.id===activePresetId?T.amberDim:"transparent",
-                color:p.id===activePresetId?T.amber:T.textMid,
-                fontWeight:p.id===activePresetId?700:400,fontSize:12,cursor:"pointer",
-              }}>
-                {p.id===guitar.basePresetId&&<span style={{color:T.amber,marginRight:3}}>★</span>}
-                {p.name}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
     </div>
   );
 }
 
-// ── Main App ──────────────────────────────────────────────────
 export default function App(){
   const [guitars,setGuitars]=useState(INIT_GUITARS);
   const [templates,setTemplates]=useState(DEFAULT_TEMPLATES);
   const [activeGuitarId,setActiveGuitarId]=useState(INIT_GUITARS[0].id);
   const [activePresetId,setActivePresetId]=useState(INIT_GUITARS[0].presets[0].id);
   const [tab,setTab]=useState("manage");
+
+  // Measure state
   const [measuring,setMeasuring]=useState(false);
   const [liveDb,setLiveDb]=useState(null);
   const [measurePhase,setMeasurePhase]=useState("idle");
   const [resultDiff,setResultDiff]=useState(null);
   const [resultAbs,setResultAbs]=useState(null);
   const [measureMode,setMeasureMode]=useState("solo");
-  const [compareMode,setCompareMode]=useState("absolute");
-  const [comparePresetName,setComparePresetName]=useState("Clean");
+
+  // Compare state
+  const [compareMode,setCompareMode]=useState("guitar"); // guitar | free
+  const [refGuitarId,setRefGuitarId]=useState(INIT_GUITARS[0].id);
+  const [refPresetId,setRefPresetId]=useState(INIT_GUITARS[0].presets[0].id);
+  const [cmpGuitarId,setCmpGuitarId]=useState(INIT_GUITARS[1].id);
+  const [cmpPresetId,setCmpPresetId]=useState(INIT_GUITARS[1].presets[0].id);
+
+  // Manage state
   const [selectedHistory,setSelectedHistory]=useState([]);
   const [selectMode,setSelectMode]=useState(false);
   const [modal,setModal]=useState(null);
@@ -154,17 +137,24 @@ export default function App(){
   const analyserRef=useRef(null);
   const streamRef=useRef(null);
   const rafRef=useRef(null);
-  const silenceTimerRef=useRef(null);
-  const samplesBufferRef=useRef([]);
 
   const guitar=guitars.find(g=>g.id===activeGuitarId);
   const preset=guitar?.presets.find(p=>p.id===activePresetId);
   const basePreset=guitar?.presets.find(p=>p.id===guitar?.basePresetId);
 
-  // ── Audio ────────────────────────────────────────────────────
+  // Reset measure when guitar/preset changes
+  useEffect(()=>{
+    if(measurePhase!=="idle"){
+      setMeasurePhase("idle");
+      setResultDiff(null);
+      setResultAbs(null);
+      stopAudio();
+    }
+  },[activeGuitarId,activePresetId]);
+
+  // Audio
   const stopAudio=useCallback(()=>{
     cancelAnimationFrame(rafRef.current);
-    clearTimeout(silenceTimerRef.current);
     streamRef.current?.getTracks().forEach(t=>t.stop());
     audioCtxRef.current?.close();
     audioCtxRef.current=null; analyserRef.current=null; streamRef.current=null;
@@ -192,7 +182,6 @@ export default function App(){
     return Math.sqrt(sum/buf.length);
   },[]);
 
-  // Live meter
   useEffect(()=>{
     if(!measuring){setLiveDb(null);return;}
     const loop=()=>{setLiveDb(rmsToDb(getRms()));rafRef.current=requestAnimationFrame(loop);};
@@ -200,14 +189,11 @@ export default function App(){
     return()=>cancelAnimationFrame(rafRef.current);
   },[measuring,getRms]);
 
-  // ── Silence-detection recording ───────────────────────────────
-  // Records until 3s of silence detected, returns average RMS
   const recordUntilSilence=useCallback(()=>new Promise(resolve=>{
-    const SILENCE_DB=-50; // threshold
+    const SILENCE_DB=-50;
     const SILENCE_DURATION=3000;
     const samples=[];
     let silenceStart=null;
-    samplesBufferRef.current=samples;
     const loop=()=>{
       const rms=getRms();
       const db=rmsToDb(rms);
@@ -215,10 +201,8 @@ export default function App(){
       if(db<SILENCE_DB){
         if(!silenceStart) silenceStart=performance.now();
         else if(performance.now()-silenceStart>=SILENCE_DURATION){
-          // drop the last 3s of silence samples
           const trimCount=Math.floor(SILENCE_DURATION/16.67);
-          const valid=samples.slice(0,Math.max(1,samples.length-trimCount));
-          resolve(valid);
+          resolve(samples.slice(0,Math.max(1,samples.length-trimCount)));
           return;
         }
       } else { silenceStart=null; }
@@ -227,12 +211,8 @@ export default function App(){
     rafRef.current=requestAnimationFrame(loop);
   }),[getRms]);
 
-  const avgRms=samples=>{
-    const sum=samples.reduce((a,b)=>a+b,0);
-    return sum/Math.max(1,samples.length);
-  };
+  const avgRms=samples=>samples.reduce((a,b)=>a+b,0)/Math.max(1,samples.length);
 
-  // ── Measurement ───────────────────────────────────────────────
   const handleMeasure=async()=>{
     if(!guitar||!preset) return;
     const ok=await startAudio(); if(!ok) return;
@@ -260,16 +240,14 @@ export default function App(){
       return;
     }
 
-    // full mode
+    // full
     setMeasurePhase("calibrate");
     const baseSamples=await recordUntilSilence();
     const baseDbVal=rmsToDb(avgRms(baseSamples));
-
     setMeasurePhase("measure");
     const tgtSamples=await recordUntilSilence();
     const tgtDbVal=rmsToDb(avgRms(tgtSamples));
     const diff=tgtDbVal-baseDbVal;
-
     setMeasurePhase("done"); setResultDiff(diff); setResultAbs(null);
     stopAudio();
     setGuitars(prev=>prev.map(g=>g.id!==activeGuitarId?g:{...g,baseAbsDb:baseDbVal,
@@ -279,7 +257,6 @@ export default function App(){
 
   const resetMeasure=()=>{setMeasurePhase("idle");setResultDiff(null);setResultAbs(null);};
 
-  // ── CRUD ──────────────────────────────────────────────────────
   const selectGuitar=id=>{
     setActiveGuitarId(id);
     const g=guitars.find(x=>x.id===id);
@@ -289,8 +266,7 @@ export default function App(){
   const addGuitar=()=>{
     if(!inputName.trim()) return;
     const tpl=selectedTemplate?templates.find(t=>t.id===selectedTemplate):null;
-    const presetNames=tpl?tpl.presets:["Clean"];
-    const g=mkGuitar(inputName.trim(),presetNames);
+    const g=mkGuitar(inputName.trim(),tpl?tpl.presets:["Clean"]);
     setGuitars(prev=>[...prev,g]);
     setActiveGuitarId(g.id); setActivePresetId(g.presets[0].id);
     setModal(null); setInputName(""); setSelectedTemplate(null);
@@ -306,16 +282,12 @@ export default function App(){
 
   const saveTemplate=()=>{
     if(!guitar||!newTemplateName.trim()) return;
-    const t={id:uid(),name:newTemplateName.trim(),presets:guitar.presets.map(p=>p.name)};
-    setTemplates(prev=>[...prev,t]);
+    setTemplates(prev=>[...prev,{id:uid(),name:newTemplateName.trim(),presets:guitar.presets.map(p=>p.name)}]);
     setNewTemplateName(""); setModal(null);
   };
 
-  const deleteTemplate=id=>setTemplates(prev=>prev.filter(t=>t.id!==id));
-
   const setBase=presetId=>setGuitars(prev=>prev.map(g=>g.id!==activeGuitarId?g:{...g,basePresetId:presetId}));
 
-  // History
   const toggleHistorySelect=(presetId,historyId)=>setSelectedHistory(prev=>{
     const exists=prev.some(s=>s.presetId===presetId&&s.historyId===historyId);
     return exists?prev.filter(s=>!(s.presetId===presetId&&s.historyId===historyId)):[...prev,{presetId,historyId}];
@@ -328,13 +300,12 @@ export default function App(){
   const deleteSingleHistory=(presetId,historyId)=>setGuitars(prev=>prev.map(g=>g.id!==activeGuitarId?g:{...g,
     presets:g.presets.map(p=>p.id!==presetId?p:{...p,history:p.history.filter(h=>h.id!==historyId)})}));
 
-  // CSV import
   const handleImport=e=>{
     const file=e.target.files?.[0]; if(!file) return;
     const reader=new FileReader();
     reader.onload=ev=>{
       const result=parseCsv(ev.target.result);
-      if(!result||result.length===0){alert("CSVの読み込みに失敗しました。フォーマットを確認してください。");return;}
+      if(!result||result.length===0){alert("CSVの読み込みに失敗しました。");return;}
       setGuitars(prev=>[...prev,...result]);
       alert(`${result.length}件のギターを読み込みました。`);
     };
@@ -342,17 +313,58 @@ export default function App(){
     e.target.value="";
   };
 
-  // Compare
+  // Compare helpers
+  const refGuitar=guitars.find(g=>g.id===refGuitarId);
+  const refPreset=refGuitar?.presets.find(p=>p.id===refPresetId);
+  const cmpGuitar=guitars.find(g=>g.id===cmpGuitarId);
+  const cmpPreset=cmpGuitar?.presets.find(p=>p.id===cmpPresetId);
+
+  // Absolute dB of a preset
+  const getAbsDb=(g,p)=>g?.baseAbsDb!=null?g.baseAbsDb+p.db:null;
+
+  // Diff between two presets using absolute dB
+  const getDiff=()=>{
+    const refAbs=getAbsDb(refGuitar,refPreset);
+    const cmpAbs=getAbsDb(cmpGuitar,cmpPreset);
+    if(refAbs==null||cmpAbs==null) return null;
+    return cmpAbs-refAbs;
+  };
+
+  // All presets for each guitar as [{id,name}]
+  const refPresets=refGuitar?.presets??[];
+  const cmpPresets=cmpGuitar?.presets??[];
+
+  // Guitar-level comparison: all presets of all guitars vs ref guitar's same preset
   const allPresetNames=[...new Set(guitars.flatMap(g=>g.presets.map(p=>p.name)))];
-  const compareRows=guitars.map(g=>{
-    const p=g.presets.find(p=>p.name===comparePresetName); if(!p) return null;
-    const hasAbs=g.baseAbsDb!==null&&g.baseAbsDb!==undefined;
-    return{guitar:g.name,relDb:p.db,absDb:hasAbs?g.baseAbsDb+p.db:null,hasAbs};
+  const [guitarComparePreset,setGuitarComparePreset]=useState(allPresetNames[0]??"Clean");
+
+  const guitarCompareRows=guitars.map(g=>{
+    const p=g.presets.find(p=>p.name===guitarComparePreset);
+    if(!p) return null;
+    const absDb=getAbsDb(g,p);
+    const refG=guitars.find(x=>x.id===refGuitarId);
+    const refP=refG?.presets.find(p=>p.name===guitarComparePreset);
+    const refAbs=refP?getAbsDb(refG,refP):null;
+    return{
+      guitar:g.name,
+      isRef:g.id===refGuitarId,
+      absDb,
+      diff:absDb!=null&&refAbs!=null?absDb-refAbs:null,
+    };
   }).filter(Boolean);
 
   const vuLevel=liveDb!==null?Math.max(0,Math.min(1,(liveDb+60)/60)):0;
 
-  // ── Render ────────────────────────────────────────────────────
+  const Btn=({children,onClick,active,disabled,style={}})=>(
+    <button onClick={onClick} disabled={disabled} style={{
+      padding:"7px 0",borderRadius:8,border:"none",flex:1,
+      background:active?T.amberDim:"transparent",
+      color:disabled?T.textLo:active?T.amber:T.textMid,
+      fontWeight:active?700:400,fontSize:12,
+      cursor:disabled?"not-allowed":"pointer",...style,
+    }}>{children}</button>
+  );
+
   return(
     <div style={{minHeight:"100vh",background:T.bg,color:T.textHi,fontFamily:"'Inter',system-ui,sans-serif",fontSize:14}}>
 
@@ -381,7 +393,7 @@ export default function App(){
             flex:1,padding:"10px 0",background:"none",border:"none",
             borderBottom:tab===key?`2px solid ${T.amber}`:"2px solid transparent",
             color:tab===key?T.amber:T.textMid,fontWeight:tab===key?700:400,
-            fontSize:13,cursor:"pointer",transition:"color 0.15s",
+            fontSize:13,cursor:"pointer",
           }}>{label}</button>
         ))}
       </div>
@@ -391,7 +403,6 @@ export default function App(){
         {/* ── MANAGE TAB ── */}
         {tab==="manage"&&(
           <div>
-            {/* Guitar selector */}
             <div style={{marginBottom:12}}>
               <div style={{color:T.textMid,fontSize:11,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.08em"}}>ギター</div>
               <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -402,7 +413,7 @@ export default function App(){
                     background:g.id===activeGuitarId?T.amberDim:"transparent",
                     color:g.id===activeGuitarId?T.amber:T.textMid,
                     fontWeight:g.id===activeGuitarId?700:400,cursor:"pointer",fontSize:13,
-                  }}>{g.icon} {g.name}</button>
+                  }}>{g.name}</button>
                 ))}
                 <button onClick={()=>setModal("guitar")} style={{
                   padding:"6px 14px",borderRadius:20,border:`1px dashed ${T.border}`,
@@ -411,13 +422,9 @@ export default function App(){
               </div>
             </div>
 
-            {/* CSV import */}
             <div style={{display:"flex",gap:8,marginBottom:12}}>
-              <label style={{
-                flex:1,padding:"8px 0",borderRadius:10,border:`1px dashed ${T.border}`,
-                background:"transparent",color:T.textMid,cursor:"pointer",fontSize:12,
-                textAlign:"center",display:"block",
-              }}>
+              <label style={{flex:1,padding:"8px 0",borderRadius:10,border:`1px dashed ${T.border}`,
+                background:"transparent",color:T.textMid,cursor:"pointer",fontSize:12,textAlign:"center",display:"block"}}>
                 ⬆ CSVインポート
                 <input type="file" accept=".csv" onChange={handleImport} style={{display:"none"}}/>
               </label>
@@ -427,33 +434,23 @@ export default function App(){
               }}>⬇ CSV出力</button>
             </div>
 
-            {/* Preset list */}
             {guitar&&(
               <div style={{background:T.surface,borderRadius:12,border:`1px solid ${T.border}`,overflow:"hidden"}}>
-                <div style={{padding:"10px 16px",borderBottom:`1px solid ${T.border}`,
-                  display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{padding:"10px 16px",borderBottom:`1px solid ${T.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                   <span style={{fontWeight:700,fontSize:15}}>{guitar.icon} {guitar.name}</span>
                   <div style={{display:"flex",gap:8}}>
-                    <button onClick={()=>setModal("saveTemplate")} style={{
-                      background:"transparent",border:`1px solid ${T.border}`,borderRadius:8,
-                      padding:"4px 10px",color:T.textMid,fontSize:11,cursor:"pointer",
-                    }}>テンプレ保存</button>
-                    <button onClick={()=>setModal("preset")} style={{
-                      background:T.amberDim,border:"none",borderRadius:8,
-                      padding:"4px 12px",color:T.amber,fontSize:12,fontWeight:700,cursor:"pointer",
-                    }}>＋ プリセット</button>
+                    <button onClick={()=>setModal("saveTemplate")} style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:8,padding:"4px 10px",color:T.textMid,fontSize:11,cursor:"pointer"}}>テンプレ保存</button>
+                    <button onClick={()=>setModal("preset")} style={{background:T.amberDim,border:"none",borderRadius:8,padding:"4px 12px",color:T.amber,fontSize:12,fontWeight:700,cursor:"pointer"}}>＋ プリセット</button>
                   </div>
                 </div>
-
                 {guitar.presets.map(p=>{
                   const isBase=p.id===guitar.basePresetId;
                   const isActive=p.id===activePresetId;
-                  const lastHistory=p.history[p.history.length-1];
                   return(
                     <div key={p.id} onClick={()=>setActivePresetId(p.id)} style={{
                       padding:"12px 16px",borderBottom:`1px solid ${T.border}`,
                       display:"flex",alignItems:"center",justifyContent:"space-between",
-                      background:isActive?"#20202a":"transparent",cursor:"pointer",transition:"background 0.1s",
+                      background:isActive?"#20202a":"transparent",cursor:"pointer",
                     }}>
                       <div style={{display:"flex",alignItems:"center",gap:10}}>
                         <div style={{width:8,height:8,borderRadius:4,background:isBase?T.amber:isActive?T.green:T.border}}/>
@@ -462,17 +459,12 @@ export default function App(){
                             {p.name}
                             {isBase&&<span style={{fontSize:10,color:T.amber,marginLeft:6,background:T.amberDim,padding:"1px 6px",borderRadius:4}}>基準</span>}
                           </div>
-                          {lastHistory&&<div style={{fontSize:10,color:T.textLo,marginTop:1}}>最終測定: {new Date(lastHistory.at).toLocaleDateString("ja-JP")}</div>}
+                          {p.history.length>0&&<div style={{fontSize:10,color:T.textLo,marginTop:1}}>最終: {new Date(p.history[p.history.length-1].at).toLocaleDateString("ja-JP")}</div>}
                         </div>
                       </div>
                       <div style={{display:"flex",alignItems:"center",gap:12}}>
                         <DbBadge value={p.db}/>
-                        {!isBase&&(
-                          <button onClick={e=>{e.stopPropagation();setBase(p.id);}} style={{
-                            background:"none",border:`1px solid ${T.border}`,borderRadius:6,
-                            padding:"2px 8px",color:T.textMid,fontSize:10,cursor:"pointer",
-                          }}>基準にする</button>
-                        )}
+                        {!isBase&&<button onClick={e=>{e.stopPropagation();setBase(p.id);}} style={{background:"none",border:`1px solid ${T.border}`,borderRadius:6,padding:"2px 8px",color:T.textMid,fontSize:10,cursor:"pointer"}}>基準にする</button>}
                       </div>
                     </div>
                   );
@@ -480,15 +472,12 @@ export default function App(){
               </div>
             )}
 
-            {/* History */}
             {preset&&preset.history.length>0&&(
               <div style={{marginTop:16}}>
                 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
                   <div style={{color:T.textMid,fontSize:11,textTransform:"uppercase",letterSpacing:"0.08em"}}>{preset.name} — 測定履歴</div>
                   <div style={{display:"flex",gap:8}}>
-                    {selectMode&&selectedHistory.length>0&&(
-                      <button onClick={deleteSelectedHistory} style={{background:T.red,border:"none",borderRadius:6,padding:"3px 10px",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer"}}>削除 ({selectedHistory.length})</button>
-                    )}
+                    {selectMode&&selectedHistory.length>0&&<button onClick={deleteSelectedHistory} style={{background:T.red,border:"none",borderRadius:6,padding:"3px 10px",color:"#fff",fontSize:11,fontWeight:700,cursor:"pointer"}}>削除 ({selectedHistory.length})</button>}
                     <button onClick={()=>{setSelectMode(m=>!m);setSelectedHistory([]);}} style={{background:"none",border:`1px solid ${T.border}`,borderRadius:6,padding:"3px 10px",color:T.textMid,fontSize:11,cursor:"pointer"}}>{selectMode?"完了":"選択"}</button>
                   </div>
                 </div>
@@ -517,42 +506,31 @@ export default function App(){
         {/* ── MEASURE TAB ── */}
         {tab==="measure"&&(
           <div>
-            {/* Guitar/Preset selector */}
-            <GuitarPresetSelector
-              guitars={guitars} activeGuitarId={activeGuitarId} activePresetId={activePresetId}
-              onSelectGuitar={selectGuitar} onSelectPreset={setActivePresetId}
-              hidePreset={measureMode==="baseOnly"}
-            />
+            {/* Guitar selector */}
+            <Selector label="ギター" items={guitars} activeId={activeGuitarId} onSelect={selectGuitar}/>
+
+            {/* Preset selector */}
+            {guitar&&(
+              <Selector label="プリセット"
+                items={guitar.presets.map(p=>({...p,name:(p.id===guitar.basePresetId?"★ ":"")+p.name}))}
+                activeId={activePresetId}
+                onSelect={id=>{
+                  setActivePresetId(id);
+                }}
+              />
+            )}
 
             {/* Mode toggle */}
-            <div style={{display:"flex",gap:6,marginBottom:16,background:T.surface,borderRadius:10,padding:4,border:`1px solid ${T.border}`}}>
-              <button onClick={()=>setMeasureMode("baseOnly")} style={{
-                flex:1,padding:"8px 4px",borderRadius:8,border:"none",
-                background:measureMode==="baseOnly"?T.amberDim:"transparent",
-                color:measureMode==="baseOnly"?T.amber:T.textMid,
-                fontWeight:measureMode==="baseOnly"?700:400,fontSize:12,cursor:"pointer",
-              }}>基準のみ</button>
-              <button onClick={()=>setMeasureMode("solo")}
-                disabled={!guitar?.baseAbsDb}
-                style={{
-                  flex:1,padding:"8px 4px",borderRadius:8,border:"none",
-                  background:measureMode==="solo"?T.amberDim:"transparent",
-                  color:!guitar?.baseAbsDb?T.textLo:measureMode==="solo"?T.amber:T.textMid,
-                  fontWeight:measureMode==="solo"?700:400,fontSize:12,
-                  cursor:!guitar?.baseAbsDb?"not-allowed":"pointer",
-                }}>対象のみ</button>
-              <button onClick={()=>setMeasureMode("full")} style={{
-                flex:1,padding:"8px 4px",borderRadius:8,border:"none",
-                background:measureMode==="full"?T.amberDim:"transparent",
-                color:measureMode==="full"?T.amber:T.textMid,
-                fontWeight:measureMode==="full"?700:400,fontSize:12,cursor:"pointer",
-              }}>基準＋対象</button>
+            <div style={{display:"flex",gap:4,marginBottom:16,background:T.surface,borderRadius:10,padding:4,border:`1px solid ${T.border}`}}>
+              <Btn active={measureMode==="baseOnly"} onClick={()=>setMeasureMode("baseOnly")}>基準のみ</Btn>
+              <Btn active={measureMode==="solo"} onClick={()=>setMeasureMode("solo")} disabled={!guitar?.baseAbsDb}>対象のみ</Btn>
+              <Btn active={measureMode==="full"} onClick={()=>setMeasureMode("full")}>基準＋対象</Btn>
             </div>
 
-            {/* Status card */}
+            {/* Status */}
             <div style={{background:T.surface,borderRadius:12,border:`1px solid ${T.border}`,padding:12,marginBottom:16}}>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                <span style={{color:T.textMid,fontSize:12}}>基準</span>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:measureMode!=="baseOnly"?6:0}}>
+                <span style={{color:T.textMid,fontSize:12}}>基準プリセット</span>
                 <span style={{color:T.amber,fontWeight:700}}>{basePreset?.name??"—"}</span>
               </div>
               {measureMode!=="baseOnly"&&(
@@ -561,26 +539,22 @@ export default function App(){
                   <span style={{fontWeight:700}}>{preset?.name??"—"}</span>
                 </div>
               )}
-              {guitar?.baseAbsDb&&(
-                <div style={{display:"flex",justifyContent:"space-between",marginTop:6}}>
+              {guitar?.baseAbsDb!=null&&(
+                <div style={{display:"flex",justifyContent:"space-between",marginTop:6,paddingTop:6,borderTop:`1px solid ${T.border}`}}>
                   <span style={{color:T.textMid,fontSize:12}}>保存済み基準</span>
                   <span style={{fontFamily:"monospace",fontSize:12,color:T.textMid}}>{fmtAbs(guitar.baseAbsDb)} dB</span>
                 </div>
               )}
             </div>
 
-            {/* Phase UI */}
             {measurePhase==="idle"&&(
               <div style={{textAlign:"center"}}>
                 <p style={{color:T.textMid,fontSize:13,lineHeight:1.7,marginBottom:20}}>
-                  {measureMode==="full"&&<>① {basePreset?.name}を弾く（弾き終えたら止める）<br/>② {preset?.name}に切り替えて弾く<br/>3秒の無音で自動的に区切ります。</>}
+                  {measureMode==="full"&&<>① {basePreset?.name}を弾く<br/>② {preset?.name}に切り替えて弾く<br/>3秒の無音で自動的に区切ります。</>}
                   {measureMode==="solo"&&<>{preset?.name}を弾いてください。<br/>3秒の無音で自動終了し、保存済みの基準と比較します。</>}
-                  {measureMode==="baseOnly"&&<>{basePreset?.name}を弾いてください。<br/>3秒の無音で自動終了し、基準音量を更新します。</>}
+                  {measureMode==="baseOnly"&&<>{basePreset?.name}を弾いてください。<br/>3秒の無音で終了し、基準音量を更新します。</>}
                 </p>
-                <button onClick={handleMeasure} style={{
-                  background:T.amber,border:"none",borderRadius:12,
-                  padding:"14px 40px",color:"#0e0e10",fontSize:16,fontWeight:800,cursor:"pointer",
-                }}>測定開始</button>
+                <button onClick={handleMeasure} style={{background:T.amber,border:"none",borderRadius:12,padding:"14px 40px",color:"#0e0e10",fontSize:16,fontWeight:800,cursor:"pointer"}}>測定開始</button>
               </div>
             )}
 
@@ -644,135 +618,191 @@ export default function App(){
         {/* ── COMPARE TAB ── */}
         {tab==="compare"&&(
           <div>
-            {/* Guitar selector (no preset — preset chosen by name below) */}
-            <GuitarPresetSelector
-              guitars={guitars} activeGuitarId={activeGuitarId} activePresetId={activePresetId}
-              onSelectGuitar={selectGuitar} onSelectPreset={setActivePresetId}
-              hidePreset={true}
-            />
-
-            {/* Preset name selector for comparison */}
-            <div style={{marginBottom:12}}>
-              <div style={{color:T.textMid,fontSize:11,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.08em"}}>比較するプリセット</div>
-              <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                {allPresetNames.map(name=>(
-                  <button key={name} onClick={()=>setComparePresetName(name)} style={{
-                    padding:"5px 12px",borderRadius:16,
-                    border:`1px solid ${name===comparePresetName?T.amber:T.border}`,
-                    background:name===comparePresetName?T.amberDim:"transparent",
-                    color:name===comparePresetName?T.amber:T.textMid,
-                    fontWeight:name===comparePresetName?700:400,fontSize:12,cursor:"pointer",
-                  }}>{name}</button>
-                ))}
-              </div>
+            {/* Compare mode toggle */}
+            <div style={{display:"flex",gap:4,marginBottom:16,background:T.surface,borderRadius:10,padding:4,border:`1px solid ${T.border}`}}>
+              <Btn active={compareMode==="guitar"} onClick={()=>setCompareMode("guitar")}>ギター間比較</Btn>
+              <Btn active={compareMode==="free"} onClick={()=>setCompareMode("free")}>自由比較</Btn>
             </div>
 
-            {/* Absolute / Relative toggle */}
-            <div style={{display:"flex",gap:8,marginBottom:12,background:T.surface,borderRadius:10,padding:4,border:`1px solid ${T.border}`}}>
-              <button onClick={()=>setCompareMode("absolute")} style={{flex:1,padding:"7px 0",borderRadius:8,border:"none",background:compareMode==="absolute"?T.amberDim:"transparent",color:compareMode==="absolute"?T.amber:T.textMid,fontWeight:compareMode==="absolute"?700:400,fontSize:12,cursor:"pointer"}}>絶対音量</button>
-              <button onClick={()=>setCompareMode("relative")} style={{flex:1,padding:"7px 0",borderRadius:8,border:"none",background:compareMode==="relative"?T.amberDim:"transparent",color:compareMode==="relative"?T.amber:T.textMid,fontWeight:compareMode==="relative"?700:400,fontSize:12,cursor:"pointer"}}>ギター内差分</button>
-            </div>
+            {/* ── Guitar comparison mode ── */}
+            {compareMode==="guitar"&&(
+              <div>
+                {/* Ref guitar */}
+                <Selector label="基準ギター" items={guitars} activeId={refGuitarId} onSelect={id=>{
+                  setRefGuitarId(id);
+                  const g=guitars.find(x=>x.id===id);
+                  if(g) setRefPresetId(g.presets[0].id);
+                }}/>
 
-            {/* Bar comparison */}
-            <div style={{background:T.surface,borderRadius:12,border:`1px solid ${T.border}`,overflow:"hidden",marginBottom:16}}>
-              {compareRows.length===0&&<div style={{padding:24,textAlign:"center",color:T.textLo}}>同名プリセットが見つかりません</div>}
-              {(()=>{
-                const usable=compareMode==="absolute"?compareRows.filter(r=>r.hasAbs):compareRows;
-                if(usable.length===0) return <div style={{padding:16,textAlign:"center",color:T.textLo,fontSize:12}}>基準が未測定のギターは絶対比較に含まれません</div>;
-                const valueOf=r=>compareMode==="absolute"?r.absDb:r.relDb;
-                const sorted=[...usable].sort((a,b)=>valueOf(b)-valueOf(a));
-                const vals=usable.map(valueOf);
-                const max=Math.max(...vals.map(Math.abs),1);
-                const min=compareMode==="absolute"?Math.min(...vals,0):0;
-                return sorted.map((r,i)=>{
-                  const v=valueOf(r);
-                  const pct=compareMode==="absolute"?((v-min)/(max-min||1))*100:(Math.abs(v)/max)*100;
-                  return(
-                    <div key={i} style={{padding:"12px 16px",borderBottom:i<sorted.length-1?`1px solid ${T.border}`:"none"}}>
-                      <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                        <span style={{fontWeight:600}}>{r.guitar}</span>
-                        {compareMode==="absolute"
-                          ?<span style={{fontFamily:"monospace",fontSize:14,fontWeight:700,color:T.amber}}>{fmtAbs(v)} dB</span>
-                          :<DbBadge value={v}/>}
-                      </div>
-                      <div style={{height:4,background:T.border,borderRadius:2}}>
-                        <div style={{height:"100%",borderRadius:2,width:`${pct}%`,background:compareMode==="absolute"?T.amber:v>0?T.red:v<0?T.blue:T.green,transition:"width 0.3s"}}/>
-                      </div>
-                    </div>
-                  );
-                });
-              })()}
-            </div>
-
-            {/* Matrix */}
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-              <div style={{color:T.textMid,fontSize:11,textTransform:"uppercase",letterSpacing:"0.08em"}}>全プリセット一覧</div>
-              <button onClick={()=>exportCsv(guitars)} style={{background:T.amberDim,border:"none",borderRadius:8,padding:"4px 12px",color:T.amber,fontSize:11,fontWeight:700,cursor:"pointer"}}>⬇ CSV</button>
-            </div>
-            {guitars.map(g=>(
-              <div key={g.id} style={{background:T.surface,borderRadius:12,border:`1px solid ${T.border}`,marginBottom:10,overflow:"hidden"}}>
-                <div style={{padding:"10px 16px",borderBottom:`1px solid ${T.border}`,fontWeight:700,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                  <span>{g.icon} {g.name}</span>
-                  {!g.baseAbsDb&&<span style={{fontSize:10,color:T.textLo}}>基準未測定</span>}
-                </div>
-                {g.presets.map(p=>(
-                  <div key={p.id} style={{padding:"8px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:`1px solid ${T.border}`}}>
-                    <div style={{display:"flex",alignItems:"center",gap:8}}>
-                      <div style={{width:6,height:6,borderRadius:3,background:p.id===g.basePresetId?T.amber:T.border}}/>
-                      <span style={{color:T.textMid,fontSize:13}}>{p.name}</span>
-                    </div>
-                    <div style={{display:"flex",alignItems:"center",gap:10}}>
-                      {g.baseAbsDb&&<span style={{fontFamily:"monospace",fontSize:11,color:T.textLo}}>{fmtAbs(g.baseAbsDb+p.db)} dB</span>}
-                      <DbBadge value={p.db} size={12}/>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* ── Modals ── */}
-      {modal&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:200}} onClick={()=>{setModal(null);setInputName("");setSelectedTemplate(null);}}>
-          <div style={{background:T.surface,borderRadius:"16px 16px 0 0",padding:24,width:"100%",maxWidth:480,border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
-
-            {/* Add guitar */}
-            {modal==="guitar"&&(
-              <>
-                <div style={{fontWeight:700,fontSize:16,marginBottom:16}}>ギターを追加</div>
-                <input autoFocus value={inputName} onChange={e=>setInputName(e.target.value)}
-                  onKeyDown={e=>e.key==="Enter"&&addGuitar()}
-                  placeholder="例: Les Paul"
-                  style={{width:"100%",boxSizing:"border-box",background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:T.textHi,fontSize:15,marginBottom:14,outline:"none"}}/>
-
-                {/* Template selection */}
-                <div style={{marginBottom:14}}>
-                  <div style={{color:T.textMid,fontSize:12,marginBottom:8}}>プリセットテンプレート</div>
+                {/* Preset name to compare */}
+                <div style={{marginBottom:12}}>
+                  <div style={{fontSize:11,color:T.textMid,marginBottom:6,textTransform:"uppercase",letterSpacing:"0.08em"}}>比較するプリセット</div>
                   <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-                    <button onClick={()=>setSelectedTemplate(null)} style={{
-                      padding:"5px 12px",borderRadius:12,fontSize:12,cursor:"pointer",
-                      border:`1px solid ${!selectedTemplate?T.amber:T.border}`,
-                      background:!selectedTemplate?T.amberDim:"transparent",
-                      color:!selectedTemplate?T.amber:T.textMid,
-                    }}>なし（Cleanのみ）</button>
-                    {templates.map(t=>(
-                      <button key={t.id} onClick={()=>setSelectedTemplate(t.id)} style={{
-                        padding:"5px 12px",borderRadius:12,fontSize:12,cursor:"pointer",
-                        border:`1px solid ${selectedTemplate===t.id?T.amber:T.border}`,
-                        background:selectedTemplate===t.id?T.amberDim:"transparent",
-                        color:selectedTemplate===t.id?T.amber:T.textMid,
-                      }}>{t.name}</button>
+                    {allPresetNames.map(name=>(
+                      <button key={name} onClick={()=>setGuitarComparePreset(name)} style={{
+                        padding:"5px 12px",borderRadius:16,
+                        border:`1px solid ${name===guitarComparePreset?T.amber:T.border}`,
+                        background:name===guitarComparePreset?T.amberDim:"transparent",
+                        color:name===guitarComparePreset?T.amber:T.textMid,
+                        fontWeight:name===guitarComparePreset?700:400,fontSize:12,cursor:"pointer",
+                      }}>{name}</button>
                     ))}
                   </div>
-                  {selectedTemplate&&(
-                    <div style={{color:T.textLo,fontSize:11,marginTop:6}}>
-                      プリセット: {templates.find(t=>t.id===selectedTemplate)?.presets.join(" / ")}
+                </div>
+
+                {/* Results */}
+                <div style={{background:T.surface,borderRadius:12,border:`1px solid ${T.border}`,overflow:"hidden",marginBottom:16}}>
+                  {guitarCompareRows.length===0
+                    ?<div style={{padding:24,textAlign:"center",color:T.textLo}}>同名プリセットが見つかりません</div>
+                    :guitarCompareRows.map((r,i)=>{
+                      const hasData=r.diff!==null;
+                      return(
+                        <div key={i} style={{padding:"12px 16px",borderBottom:i<guitarCompareRows.length-1?`1px solid ${T.border}`:"none"}}>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:hasData?6:0}}>
+                            <div style={{display:"flex",alignItems:"center",gap:8}}>
+                              <span style={{fontWeight:600}}>{r.guitar}</span>
+                              {r.isRef&&<span style={{fontSize:10,color:T.amber,background:T.amberDim,padding:"1px 6px",borderRadius:4}}>基準</span>}
+                            </div>
+                            {hasData
+                              ?<DbBadge value={r.diff}/>
+                              :<span style={{fontSize:11,color:T.textLo}}>未測定</span>}
+                          </div>
+                          {hasData&&(
+                            <div style={{height:4,background:T.border,borderRadius:2}}>
+                              <div style={{height:"100%",borderRadius:2,
+                                width:`${Math.min(100,Math.abs(r.diff)*10+5)}%`,
+                                background:r.isRef?T.amber:r.diff>0?T.red:r.diff<0?T.blue:T.green,
+                                transition:"width 0.3s"}}/>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  }
+                </div>
+
+                <button onClick={()=>exportCsv(guitars)} style={{width:"100%",background:T.amberDim,border:"none",borderRadius:10,padding:10,color:T.amber,fontSize:12,fontWeight:700,cursor:"pointer",marginBottom:16}}>⬇ CSV出力</button>
+
+                {/* Matrix */}
+                <div style={{color:T.textMid,fontSize:11,marginBottom:8,textTransform:"uppercase",letterSpacing:"0.08em"}}>全プリセット一覧</div>
+                {guitars.map(g=>(
+                  <div key={g.id} style={{background:T.surface,borderRadius:12,border:`1px solid ${T.border}`,marginBottom:10,overflow:"hidden"}}>
+                    <div style={{padding:"10px 16px",borderBottom:`1px solid ${T.border}`,fontWeight:700,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <span>{g.icon} {g.name}</span>
+                      {!g.baseAbsDb&&<span style={{fontSize:10,color:T.textLo}}>基準未測定</span>}
+                    </div>
+                    {g.presets.map(p=>{
+                      const absDb=getAbsDb(g,p);
+                      const refG=guitars.find(x=>x.id===refGuitarId);
+                      const refP=refG?.presets.find(x=>x.name===p.name);
+                      const refAbs=refP?getAbsDb(refG,refP):null;
+                      const diff=absDb!=null&&refAbs!=null?absDb-refAbs:null;
+                      return(
+                        <div key={p.id} style={{padding:"8px 16px",display:"flex",justifyContent:"space-between",alignItems:"center",borderBottom:`1px solid ${T.border}`}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8}}>
+                            <div style={{width:6,height:6,borderRadius:3,background:p.id===g.basePresetId?T.amber:T.border}}/>
+                            <span style={{color:T.textMid,fontSize:13}}>{p.name}</span>
+                          </div>
+                          <div style={{display:"flex",alignItems:"center",gap:10}}>
+                            {absDb!=null&&<span style={{fontFamily:"monospace",fontSize:11,color:T.textLo}}>{fmtAbs(absDb)} dB</span>}
+                            {diff!=null?<DbBadge value={diff} size={12}/>:<span style={{fontSize:11,color:T.textLo}}>—</span>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* ── Free comparison mode ── */}
+            {compareMode==="free"&&(
+              <div>
+                <div style={{color:T.textMid,fontSize:12,marginBottom:12}}>任意の2つを選んで差分を確認できます</div>
+
+                {/* Ref side */}
+                <div style={{background:T.surface,borderRadius:12,border:`1px solid ${T.border}`,padding:12,marginBottom:12}}>
+                  <div style={{fontSize:11,color:T.amber,marginBottom:8,fontWeight:700}}>基準</div>
+                  <Selector label="ギター" items={guitars} activeId={refGuitarId} onSelect={id=>{
+                    setRefGuitarId(id);
+                    const g=guitars.find(x=>x.id===id);
+                    if(g) setRefPresetId(g.presets[0].id);
+                  }}/>
+                  <Selector label="プリセット" items={refPresets} activeId={refPresetId} onSelect={setRefPresetId}/>
+                  {refGuitar&&refPreset&&(
+                    <div style={{fontSize:12,color:T.textMid,marginTop:4}}>
+                      絶対音量: {getAbsDb(refGuitar,refPreset)!=null?`${fmtAbs(getAbsDb(refGuitar,refPreset))} dB`:"未測定"}
                     </div>
                   )}
                 </div>
 
+                {/* Cmp side */}
+                <div style={{background:T.surface,borderRadius:12,border:`1px solid ${T.border}`,padding:12,marginBottom:16}}>
+                  <div style={{fontSize:11,color:T.blue,marginBottom:8,fontWeight:700}}>比較対象</div>
+                  <Selector label="ギター" items={guitars} activeId={cmpGuitarId} onSelect={id=>{
+                    setCmpGuitarId(id);
+                    const g=guitars.find(x=>x.id===id);
+                    if(g) setCmpPresetId(g.presets[0].id);
+                  }}/>
+                  <Selector label="プリセット" items={cmpPresets} activeId={cmpPresetId} onSelect={setCmpPresetId}/>
+                  {cmpGuitar&&cmpPreset&&(
+                    <div style={{fontSize:12,color:T.textMid,marginTop:4}}>
+                      絶対音量: {getAbsDb(cmpGuitar,cmpPreset)!=null?`${fmtAbs(getAbsDb(cmpGuitar,cmpPreset))} dB`:"未測定"}
+                    </div>
+                  )}
+                </div>
+
+                {/* Result */}
+                {(()=>{
+                  const diff=getDiff();
+                  if(diff===null) return(
+                    <div style={{background:T.surface,borderRadius:12,border:`1px solid ${T.border}`,padding:20,textAlign:"center",color:T.textLo,fontSize:13}}>
+                      両方のギターを「基準のみ」または「基準＋対象」で測定してください
+                    </div>
+                  );
+                  return(
+                    <div style={{background:T.surface,borderRadius:12,border:`1px solid ${T.border}`,padding:20,textAlign:"center"}}>
+                      <div style={{color:T.textMid,fontSize:12,marginBottom:8}}>
+                        {refGuitar?.name} {refPreset?.name} → {cmpGuitar?.name} {cmpPreset?.name}
+                      </div>
+                      <div style={{fontSize:52,fontFamily:"monospace",fontWeight:800,color:diff>0?T.red:diff<0?T.blue:T.green}}>
+                        {fmt(diff)} dB
+                      </div>
+                      <div style={{color:T.textMid,fontSize:12,marginTop:8}}>
+                        {diff>0?"比較対象の方が大きい":diff<0?"基準の方が大きい":"同じ音量"}
+                      </div>
+                      <div style={{color:T.amber,fontSize:13,fontWeight:700,marginTop:8}}>
+                        推奨補正: {fmt(-diff)} dB調整
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Modals */}
+      {modal&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:200}} onClick={()=>{setModal(null);setInputName("");setSelectedTemplate(null);}}>
+          <div style={{background:T.surface,borderRadius:"16px 16px 0 0",padding:24,width:"100%",maxWidth:480,border:`1px solid ${T.border}`}} onClick={e=>e.stopPropagation()}>
+
+            {modal==="guitar"&&(
+              <>
+                <div style={{fontWeight:700,fontSize:16,marginBottom:16}}>ギターを追加</div>
+                <input autoFocus value={inputName} onChange={e=>setInputName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addGuitar()} placeholder="例: Les Paul"
+                  style={{width:"100%",boxSizing:"border-box",background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:T.textHi,fontSize:15,marginBottom:14,outline:"none"}}/>
+                <div style={{marginBottom:14}}>
+                  <div style={{color:T.textMid,fontSize:12,marginBottom:8}}>プリセットテンプレート</div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                    <button onClick={()=>setSelectedTemplate(null)} style={{padding:"5px 12px",borderRadius:12,fontSize:12,cursor:"pointer",border:`1px solid ${!selectedTemplate?T.amber:T.border}`,background:!selectedTemplate?T.amberDim:"transparent",color:!selectedTemplate?T.amber:T.textMid}}>なし</button>
+                    {templates.map(t=>(
+                      <button key={t.id} onClick={()=>setSelectedTemplate(t.id)} style={{padding:"5px 12px",borderRadius:12,fontSize:12,cursor:"pointer",border:`1px solid ${selectedTemplate===t.id?T.amber:T.border}`,background:selectedTemplate===t.id?T.amberDim:"transparent",color:selectedTemplate===t.id?T.amber:T.textMid}}>{t.name}</button>
+                    ))}
+                  </div>
+                  {selectedTemplate&&<div style={{color:T.textLo,fontSize:11,marginTop:6}}>{templates.find(t=>t.id===selectedTemplate)?.presets.join(" / ")}</div>}
+                </div>
                 <div style={{display:"flex",gap:10}}>
                   <button onClick={()=>{setModal(null);setInputName("");setSelectedTemplate(null);}} style={{flex:1,background:"transparent",border:`1px solid ${T.border}`,borderRadius:10,padding:12,color:T.textMid,cursor:"pointer",fontSize:14}}>キャンセル</button>
                   <button onClick={addGuitar} style={{flex:1,background:T.amber,border:"none",borderRadius:10,padding:12,color:"#0e0e10",fontWeight:800,cursor:"pointer",fontSize:14}}>追加</button>
@@ -780,13 +810,10 @@ export default function App(){
               </>
             )}
 
-            {/* Add preset */}
             {modal==="preset"&&(
               <>
                 <div style={{fontWeight:700,fontSize:16,marginBottom:16}}>プリセットを追加</div>
-                <input autoFocus value={inputName} onChange={e=>setInputName(e.target.value)}
-                  onKeyDown={e=>e.key==="Enter"&&addPreset()}
-                  placeholder="例: Solo"
+                <input autoFocus value={inputName} onChange={e=>setInputName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addPreset()} placeholder="例: Solo"
                   style={{width:"100%",boxSizing:"border-box",background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:T.textHi,fontSize:15,marginBottom:14,outline:"none"}}/>
                 <div style={{display:"flex",gap:10}}>
                   <button onClick={()=>{setModal(null);setInputName("");}} style={{flex:1,background:"transparent",border:`1px solid ${T.border}`,borderRadius:10,padding:12,color:T.textMid,cursor:"pointer",fontSize:14}}>キャンセル</button>
@@ -795,34 +822,23 @@ export default function App(){
               </>
             )}
 
-            {/* Save template */}
             {modal==="saveTemplate"&&(
               <>
                 <div style={{fontWeight:700,fontSize:16,marginBottom:4}}>テンプレートとして保存</div>
-                <div style={{color:T.textMid,fontSize:12,marginBottom:16}}>
-                  {guitar?.name}のプリセット構成（{guitar?.presets.map(p=>p.name).join(" / ")}）を保存します
-                </div>
-                <input autoFocus value={newTemplateName} onChange={e=>setNewTemplateName(e.target.value)}
-                  onKeyDown={e=>e.key==="Enter"&&saveTemplate()}
-                  placeholder="例: Standard 4"
+                <div style={{color:T.textMid,fontSize:12,marginBottom:16}}>{guitar?.presets.map(p=>p.name).join(" / ")}</div>
+                <input autoFocus value={newTemplateName} onChange={e=>setNewTemplateName(e.target.value)} onKeyDown={e=>e.key==="Enter"&&saveTemplate()} placeholder="例: Standard 4"
                   style={{width:"100%",boxSizing:"border-box",background:T.bg,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",color:T.textHi,fontSize:15,marginBottom:14,outline:"none"}}/>
-
-                {/* Existing templates */}
                 {templates.length>0&&(
                   <div style={{marginBottom:14}}>
                     <div style={{color:T.textMid,fontSize:11,marginBottom:8}}>既存のテンプレート</div>
                     {templates.map(t=>(
                       <div key={t.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:`1px solid ${T.border}`}}>
-                        <div>
-                          <span style={{fontSize:13}}>{t.name}</span>
-                          <span style={{color:T.textLo,fontSize:11,marginLeft:8}}>{t.presets.join(" / ")}</span>
-                        </div>
-                        <button onClick={()=>deleteTemplate(t.id)} style={{background:"none",border:"none",color:T.textLo,fontSize:13,cursor:"pointer"}}>✕</button>
+                        <div><span style={{fontSize:13}}>{t.name}</span><span style={{color:T.textLo,fontSize:11,marginLeft:8}}>{t.presets.join(" / ")}</span></div>
+                        <button onClick={()=>setTemplates(prev=>prev.filter(x=>x.id!==t.id))} style={{background:"none",border:"none",color:T.textLo,fontSize:13,cursor:"pointer"}}>✕</button>
                       </div>
                     ))}
                   </div>
                 )}
-
                 <div style={{display:"flex",gap:10}}>
                   <button onClick={()=>{setModal(null);setNewTemplateName("");}} style={{flex:1,background:"transparent",border:`1px solid ${T.border}`,borderRadius:10,padding:12,color:T.textMid,cursor:"pointer",fontSize:14}}>キャンセル</button>
                   <button onClick={saveTemplate} style={{flex:1,background:T.amber,border:"none",borderRadius:10,padding:12,color:"#0e0e10",fontWeight:800,cursor:"pointer",fontSize:14}}>保存</button>
